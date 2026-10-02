@@ -1,0 +1,105 @@
+[worldserver]
+
+########################################
+# mod-collection configuration
+#
+# Account-wide mount and companion collections. When a character learns a mount
+# or a companion it is recorded against the account, and every other character
+# on that account is given it at their next login.
+#
+# 3.3.5 has no collection system to make account-wide - a mount is a spell in
+# one character's spellbook - so the account keeps a pool and characters are
+# handed what it holds. The spells are taught temporarily and are never written
+# to character_spell, so `account_collection` is the only record and switching
+# this module off gives every character back exactly the spellbook it owns.
+#
+#   .collection list [player]   how much that account has collected
+#   .collection sync [player]   hand an online character its pool now
+#   .collection scan            collect from every offline character too
+#   .collection reload          re-read the DBC and the table
+#
+# Run ".collection scan" once after installing. Without it an existing realm
+# only starts collecting from the next mount bought, because nothing can fire
+# retroactively for a mount a character already owns.
+#
+# RIDING SKILL IS NOT SHARED, and cannot be: riding is skill line 762 and no
+# mount or companion appears in it, so an alt sees the mounts and still has to
+# buy its own riding before any of them will work.
+#
+# CLASS MOUNTS STAY WITH THEIR CLASS. The seven class-locked mounts - the two
+# warlock steeds, the four paladin chargers and Acherus Deathcharger - are
+# collected by the account but only ever handed back to a character of that
+# class.
+########################################
+#
+#    Collection.Enable
+#        Description: Share mount and companion collections across an account.
+#        Default:     1 - (Enabled)
+#                     0 - (Disabled)
+
+Collection.Enable = 1
+
+#
+#    Collection.Mounts
+#        Description: Share mounts (SkillLineAbility line 777).
+#        Default:     1 - (Enabled)
+
+Collection.Mounts = 1
+
+#
+#    Collection.Companions
+#        Description: Share companions (SkillLineAbility line 778).
+#        Default:     1 - (Enabled)
+
+Collection.Companions = 1
+
+#
+#    Collection.CrossFaction
+#        Description: Share the handful of mounts whose DBC row restricts them
+#                     to one faction's races - the Mechano-hog, the Mekgineer's
+#                     Chopper and the racial paladin chargers.
+#
+#                     A race mask on a mount is a faction gate rather than a
+#                     mechanical requirement: nothing in the server stops the
+#                     mount working on the other side, because the only code
+#                     that reads that mask is the trainer.
+#
+#                     Class restrictions are enforced regardless of this
+#                     setting.
+#        Default:     1 - (Share them; collections are per account, not per
+#                          faction)
+#                     0 - (Keep each one to the races its DBC row names)
+
+Collection.CrossFaction = 1
+
+#
+#    Collection.SkipBots
+#        Description: Leave playerbots out entirely - collect nothing from them
+#                     and give nothing to them.
+#
+#                     Worth keeping on with mod-playerbots: its 500 bots share
+#                     a handful of accounts, so otherwise every bot would pool
+#                     its mounts with its account siblings.
+#        Default:     1 - (Enabled)
+
+Collection.SkipBots = 1
+
+#
+#    Collection.BotAccountPrefix
+#        Description: Account name prefix treated as a bot by ".collection
+#                     scan" only. The login hook uses WorldSession::IsBot,
+#                     which is exact, but an offline bot cannot be told from an
+#                     offline player in the database, so the scan needs a name
+#                     to go on. Empty means scan everything.
+#        Default:     "RNDBOT" - (mod-playerbots' random bot accounts)
+
+Collection.BotAccountPrefix = "RNDBOT"
+
+#
+#    Collection.Announce
+#        Description: Tell the player when something is added to the account's
+#                     collection, and how much their spellbook received on
+#                     login.
+#        Default:     1 - (Enabled)
+
+Collection.Announce = 1
