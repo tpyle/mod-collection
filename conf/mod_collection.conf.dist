@@ -22,9 +22,17 @@
 # only starts collecting from the next mount bought, because nothing can fire
 # retroactively for a mount a character already owns.
 #
-# RIDING SKILL IS NOT SHARED, and cannot be: riding is skill line 762 and no
-# mount or companion appears in it, so an alt sees the mounts and still has to
-# buy its own riding before any of them will work.
+# RIDING SKILL IS NOT SHARED: riding is skill line 762 and no mount or companion
+# appears in it. That is not enough on its own, though, because a mount SPELL
+# carries no requirement at all - in retail the gate is on the ITEM that teaches
+# the mount, so handing over the learned spell bypasses it and a level 14
+# character rides without ever having bought riding.
+#
+# Collection.RespectRequirements closes that by reading the gate back off the
+# teaching item, which also covers the seven mounts gated on Tailoring or
+# Engineering rather than on Riding. A shared mount then appears only once the
+# character could have earned it, and arrives on the spot when they buy the
+# riding rank or hit the level.
 #
 # CLASS MOUNTS STAY WITH THEIR CLASS. The seven class-locked mounts - the two
 # warlock steeds, the four paladin chargers and Acherus Deathcharger - are
@@ -71,6 +79,29 @@ Collection.Companions = 1
 #                     0 - (Keep each one to the races its DBC row names)
 
 Collection.CrossFaction = 1
+
+#
+#    Collection.RespectRequirements
+#        Description: Only hand over a collected spell once the character meets
+#                     what the item that teaches it required - its skill, that
+#                     skill's rank, and its level.
+#
+#                     This is what keeps riding skill meaningful. A mount spell
+#                     asks for nothing by itself, so with this off a shared
+#                     mount is rideable the moment it arrives, at any level and
+#                     with no riding at all.
+#
+#                     Where several items teach the same mount with different
+#                     requirements the strictest wins. One source of 35028 asks
+#                     for nothing while another asks for Riding 150, and reading
+#                     the permissive one would put the gate back on the floor.
+#
+#                     31 mounts are taught by no item and 16 by items with no
+#                     requirement; those are shared freely either way.
+#        Default:     1 - (Enabled)
+#                     0 - (Disabled, share everything immediately)
+
+Collection.RespectRequirements = 1
 
 #
 #    Collection.SkipBots

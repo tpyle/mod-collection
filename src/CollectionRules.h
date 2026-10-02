@@ -25,6 +25,101 @@ namespace Collection
     constexpr std::uint32_t SKILL_COMPANIONS = 778;
     constexpr std::uint32_t SKILL_RIDING     = 762;
 
+    // The pre-TBC per-race riding skills. They were merged into SKILL_RIDING
+    // long before 3.3.5, so no character has any of them - but eleven mounts
+    // are still taught by items that ask for one. Taking those at face value
+    // would block those mounts for ever, so they are read as Riding instead.
+    inline bool IsLegacyRidingSkill(std::uint32_t skill)
+    {
+        switch (skill)
+        {
+            case 148:   // SKILL_RIDING_HORSE
+            case 149:   // SKILL_RIDING_WOLF
+            case 150:   // SKILL_RIDING_TIGER
+            case 152:   // SKILL_RIDING_RAM
+            case 533:   // SKILL_RIDING_RAPTOR
+            case 554:   // SKILL_RIDING_UNDEAD_HORSE
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    constexpr std::uint32_t RIDING_APPRENTICE = 75;
+
+    // What a character has to be and know before a collected spell is handed
+    // over. This does not come from the spell: a mount spell carries no
+    // requirement at all, which is the whole reason this exists. The gate in
+    // retail 3.3.5 is on the ITEM that teaches the mount -
+    // item_template.RequiredSkill / RequiredSkillRank / RequiredLevel - so
+    // sharing a learned spell walks straight past it, and a level 14 warlock
+    // ends up riding without ever having bought riding.
+    //
+    // Reading it from the item generalises past riding for free: seven mounts
+    // are gated on Tailoring or Engineering rather than on Riding, and the same
+    // rule keeps a chopper away from somebody who is not an engineer.
+    struct Requirement
+    {
+        std::uint32_t skillId   = 0;
+        std::uint32_t skillRank = 0;
+        std::uint32_t level     = 0;
+
+        bool Any() const { return skillId || level; }
+    };
+
+    inline Requirement Normalise(Requirement req)
+    {
+        if (IsLegacyRidingSkill(req.skillId))
+        {
+            req.skillId   = SKILL_RIDING;
+            req.skillRank = RIDING_APPRENTICE;
+        }
+
+        return req;
+    }
+
+    // Several items can teach the same mount with different requirements -
+    // 22717 through 22724 are each sold both as a Journeyman and as an
+    // Apprentice item, and 35028 has one source asking for Riding 150 and
+    // another asking for nothing whatsoever. The strictest reading wins,
+    // because the permissive one would let that second source erase the gate
+    // entirely, which is the bug this is here to close. The cost is that nine
+    // war steeds ask for one rank more than their cheapest source did.
+    inline Requirement Stricter(Requirement const& a, Requirement const& b)
+    {
+        Requirement out;
+
+        out.level = a.level > b.level ? a.level : b.level;
+
+        // A skill requirement beats no skill requirement, and between two of
+        // the same skill the higher rank wins. Two different skills cannot be
+        // combined, so the one already there is kept.
+        if (!a.skillId)
+            out.skillId = b.skillId, out.skillRank = b.skillRank;
+        else if (!b.skillId || a.skillId != b.skillId)
+            out.skillId = a.skillId, out.skillRank = a.skillRank;
+        else
+        {
+            out.skillId   = a.skillId;
+            out.skillRank = a.skillRank > b.skillRank ? a.skillRank : b.skillRank;
+        }
+
+        return out;
+    }
+
+    // skillRank is the character's rank in req.skillId, which the caller looks
+    // up; this header knows nothing about players.
+    inline bool Meets(Requirement const& req, std::uint32_t level, std::uint32_t skillRank)
+    {
+        if (req.level && level < req.level)
+            return false;
+
+        if (req.skillId && skillRank < req.skillRank)
+            return false;
+
+        return true;
+    }
+
     enum Kind : std::uint8_t
     {
         KIND_MOUNT     = 0,

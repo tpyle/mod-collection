@@ -16,15 +16,52 @@ skill line **777** and every companion in **778**, and
 `SpellInfo::IsAbilityOfSkillType` answers against those. In this client's data
 that is 315 mounts and 205 companions.
 
-## Riding skill is not shared, structurally
+## Riding skill, and the gate that is not where you would look
 
 Riding is skill line **762**, and no mount or companion appears in it - the five
-riding spells are in 762 alone. So filtering on the two collection lines cannot
-share riding however the policy is set; it is not a special case that could be
-got wrong later. An alt sees every mount in its spellbook and still has to buy
-its own riding before any of them will work, which is also why `MinSkillLineRank`
-being 1 on all 315 mounts does not matter: the requirement lives on the spell,
-not on the skill line.
+riding spells are in 762 alone - so filtering on the two collection lines cannot
+share riding however the policy is set.
+
+That is necessary and **not sufficient**, which took a bug report to notice. A
+mount spell carries no requirement of its own: `MinSkillLineRank` is 1 on all
+315 mounts, and nothing in `Spell::CheckCast` asks about riding. The gate in
+retail is on the **item** that teaches the mount -
+`item_template.RequiredSkill`, `RequiredSkillRank`, `RequiredLevel`; the Brown
+Horse Bridle is `762 / 75 / 20`. Hand over the learned spell and that gate is
+simply never consulted, so a level 14 warlock rides at full speed having never
+bought riding.
+
+So `Collection.RespectRequirements` reads the requirement back off the teaching
+items and holds a collected spell until the character meets it. Reading it from
+the item rather than hard-coding riding pays for itself: of 311 mount spells,
+280 are taught by an item, and their requirements are not all riding -
+
+| Required skill | Ranks | Mounts |
+| --- | --- | --- |
+| 762 Riding | 75 / 150 / 225 / 300 | 60 / 129 / 10 / 57 |
+| 197 Tailoring, 202 Engineering | 300-450 | 7 |
+| 148/149/150/152/533/554 legacy riding | 1 | 11 |
+| none | - | 16 |
+
+- the same rule therefore also keeps a chopper away from somebody who is not an
+engineer.
+
+Two wrinkles in that data. The six **legacy per-race riding skills** were merged
+into Riding before 3.3.5, so no character has any of them and taking those
+requirements literally would block those eleven mounts for ever; they are read
+as Riding 75. And where **several items teach the same mount with different
+requirements**, the strictest wins: 22717-22724 are each sold as both a
+Journeyman and an Apprentice item, and spell 35028 has one source asking for
+Riding 150 and another asking for nothing at all, so the permissive reading
+would put the gate straight back on the floor. The cost is that nine war steeds
+ask one rank more than their cheapest source did.
+
+A collected mount arrives the moment it becomes legitimate: the module re-checks
+the pool on level-up and whenever a spell is learned, the latter because riding
+ranks and profession skills are themselves spells.
+
+The 31 mounts taught by no item at all - class mounts, quest and achievement
+rewards - carry no requirement to recover, and are shared freely.
 
 ## The class mount trap
 

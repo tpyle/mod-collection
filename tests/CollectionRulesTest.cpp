@@ -214,3 +214,137 @@ TEST(CollectionFits, UnrestrictedFitsEverybody)
     EXPECT_TRUE(FitsRace(PlainMount(), HUMAN));
     EXPECT_TRUE(FitsRace(PlainMount(), 0));
 }
+
+// ---------------------------------------------------------------------------
+// Requirements.
+//
+// These exist because a mount spell carries no requirement at all: the gate is
+// on the item that teaches it. Sharing a learned spell bypassed it completely
+// and a level 14 character rode without ever having bought riding.
+// ---------------------------------------------------------------------------
+
+TEST(CollectionRequirement, NoRequirementIsNoGate)
+{
+    Requirement none;
+    EXPECT_FALSE(none.Any());
+    EXPECT_TRUE(Meets(none, 1, 0));
+}
+
+TEST(CollectionRequirement, RidingRankAndLevelAreBothEnforced)
+{
+    // 5656 Brown Horse Bridle: RequiredSkill 762, rank 75, level 20.
+    Requirement const bridle{ SKILL_RIDING, 75, 20 };
+
+    EXPECT_TRUE(bridle.Any());
+
+    EXPECT_FALSE(Meets(bridle, 14, 0));    // the reported bug: level 14, no riding
+    EXPECT_FALSE(Meets(bridle, 20, 0));    // right level, no riding
+    EXPECT_FALSE(Meets(bridle, 14, 75));   // riding, too low a level
+    EXPECT_TRUE(Meets(bridle, 20, 75));    // both
+    EXPECT_TRUE(Meets(bridle, 80, 300));   // comfortably both
+}
+
+TEST(CollectionRequirement, AProfessionGateWorksTheSameWay)
+{
+    // The engineering choppers ask for Engineering rather than Riding, and the
+    // same rule keeps them away from anybody who is not an engineer.
+    Requirement const chopper{ 202 /*engineering*/, 375, 70 };
+
+    EXPECT_FALSE(Meets(chopper, 80, 0));
+    EXPECT_FALSE(Meets(chopper, 80, 300));
+    EXPECT_TRUE(Meets(chopper, 80, 375));
+    EXPECT_FALSE(Meets(chopper, 69, 450));
+}
+
+TEST(CollectionRequirement, LegacyRacialRidingSkillsAreReadAsRiding)
+{
+    // 148, 149, 150, 152, 533 and 554 were merged into Riding before 3.3.5, so
+    // no character has any of them. Taken literally they would block the eleven
+    // mounts whose items still ask for one, for ever.
+    for (std::uint32_t skill : { 148u, 149u, 150u, 152u, 533u, 554u })
+    {
+        EXPECT_TRUE(IsLegacyRidingSkill(skill)) << skill;
+
+        Requirement const legacy = Normalise({ skill, 1, 40 });
+        EXPECT_EQ(legacy.skillId, SKILL_RIDING);
+        EXPECT_EQ(legacy.skillRank, RIDING_APPRENTICE);
+        EXPECT_EQ(legacy.level, 40u);
+
+        // Which then behaves as an ordinary riding gate.
+        EXPECT_FALSE(Meets(legacy, 40, 0));
+        EXPECT_TRUE(Meets(legacy, 40, 75));
+    }
+
+    EXPECT_FALSE(IsLegacyRidingSkill(SKILL_RIDING));
+    EXPECT_FALSE(IsLegacyRidingSkill(202));
+    EXPECT_FALSE(IsLegacyRidingSkill(0));
+}
+
+TEST(CollectionRequirement, NormaliseLeavesEverythingElseAlone)
+{
+    Requirement const riding = Normalise({ SKILL_RIDING, 150, 40 });
+    EXPECT_EQ(riding.skillId, SKILL_RIDING);
+    EXPECT_EQ(riding.skillRank, 150u);
+
+    Requirement const tailoring = Normalise({ 197, 300, 60 });
+    EXPECT_EQ(tailoring.skillId, 197u);
+    EXPECT_EQ(tailoring.skillRank, 300u);
+}
+
+TEST(CollectionRequirement, TheStrictestSourceWins)
+{
+    // 22717 through 22724 are each sold as both a Journeyman and an Apprentice
+    // item. Journeyman has to win, or the cheaper source lowers the gate.
+    Requirement const journeyman{ SKILL_RIDING, 150, 40 };
+    Requirement const apprentice{ SKILL_RIDING, 75, 40 };
+
+    Requirement const both = Stricter(journeyman, apprentice);
+    EXPECT_EQ(both.skillRank, 150u);
+    EXPECT_EQ(Stricter(apprentice, journeyman).skillRank, 150u);
+}
+
+TEST(CollectionRequirement, ASourceWithNoRequirementCannotEraseTheGate)
+{
+    // 35028 is the case that settles the policy: one item asks for Riding 150
+    // and another asks for nothing. Reading the permissive one would hand the
+    // mount to anybody, which is the bug all over again.
+    Requirement const gated{ SKILL_RIDING, 150, 40 };
+    Requirement const free{ 0, 0, 40 };
+
+    Requirement const both = Stricter(gated, free);
+    EXPECT_EQ(both.skillId, SKILL_RIDING);
+    EXPECT_EQ(both.skillRank, 150u);
+    EXPECT_EQ(both.level, 40u);
+    EXPECT_FALSE(Meets(both, 80, 0));
+
+    EXPECT_EQ(Stricter(free, gated).skillRank, 150u);
+}
+
+TEST(CollectionRequirement, TheHigherLevelWins)
+{
+    // 54753 and 65917 each have a level 40 and a level 60 source.
+    Requirement const low{ SKILL_RIDING, 150, 40 };
+    Requirement const high{ SKILL_RIDING, 150, 60 };
+
+    EXPECT_EQ(Stricter(low, high).level, 60u);
+    EXPECT_EQ(Stricter(high, low).level, 60u);
+}
+
+TEST(CollectionRequirement, TwoDifferentSkillsKeepTheFirst)
+{
+    // Nothing sensible can be made of "needs Riding 150 AND Engineering 375"
+    // in one field, so the requirement already recorded is kept rather than
+    // being silently swapped for an unrelated skill.
+    Requirement const riding{ SKILL_RIDING, 150, 40 };
+    Requirement const engineering{ 202, 375, 70 };
+
+    Requirement const both = Stricter(riding, engineering);
+    EXPECT_EQ(both.skillId, SKILL_RIDING);
+    EXPECT_EQ(both.skillRank, 150u);
+    EXPECT_EQ(both.level, 70u);          // the stricter level still applies
+}
+
+TEST(CollectionRequirement, StricterOfNothingIsNothing)
+{
+    EXPECT_FALSE(Stricter({}, {}).Any());
+}

@@ -68,6 +68,7 @@ namespace
         bool Enable     = true;
         bool SkipBots   = true;
         bool Announce   = true;
+        bool RespectRequirements = true;
         std::string BotAccountPrefix = "RNDBOT";
         Collection::Policy Policy;
     };
@@ -80,6 +81,7 @@ namespace
     {
         Collection::Kind  kind  = Collection::KIND_MOUNT;
         Collection::SkillLines lines;
+        Collection::Requirement requirement;
     };
 
     std::unordered_map<uint32 /*spellId*/, Collectable> collectables;
@@ -92,6 +94,7 @@ namespace
         cfg.Enable               = sConfigMgr->GetOption<bool>("Collection.Enable", true);
         cfg.SkipBots             = sConfigMgr->GetOption<bool>("Collection.SkipBots", true);
         cfg.Announce             = sConfigMgr->GetOption<bool>("Collection.Announce", true);
+        cfg.RespectRequirements  = sConfigMgr->GetOption<bool>("Collection.RespectRequirements", true);
         cfg.BotAccountPrefix     = sConfigMgr->GetOption<std::string>("Collection.BotAccountPrefix", "RNDBOT");
         cfg.Policy.mounts        = sConfigMgr->GetOption<bool>("Collection.Mounts", true);
         cfg.Policy.companions    = sConfigMgr->GetOption<bool>("Collection.Companions", true);
@@ -137,6 +140,61 @@ namespace
 
         LOG_INFO("module", "mod-collection: {} mount(s) and {} companion(s) are collectable.", mounts, companions);
         return uint32(collectables.size());
+    }
+
+    // A mount spell carries no requirement of its own. In retail the gate is on
+    // the ITEM that teaches it - RequiredSkill, RequiredSkillRank and
+    // RequiredLevel - so handing over a learned spell bypasses it entirely and
+    // a level 14 character rides without ever having bought riding. This reads
+    // the gate back off the items, which also covers the seven mounts gated on
+    // Tailoring or Engineering rather than on Riding.
+    //
+    // Five spell columns because a teaching item can carry the mount in any of
+    // them; the bridles use spellid_2, with spellid_1 holding a generic wrapper.
+    uint32 LoadRequirements()
+    {
+        QueryResult result = WorldDatabase.Query(
+            "SELECT `spellid_1`, `spellid_2`, `spellid_3`, `spellid_4`, `spellid_5`, "
+            "`RequiredSkill`, `RequiredSkillRank`, `RequiredLevel` FROM `item_template` "
+            "WHERE `RequiredSkill` > 0 OR `RequiredLevel` > 0");
+
+        if (!result)
+            return 0;
+
+        uint32 gated = 0;
+
+        do
+        {
+            Field* fields = result->Fetch();
+
+            Collection::Requirement req;
+            req.skillId   = fields[5].Get<uint32>();
+            req.skillRank = fields[6].Get<uint32>();
+            req.level     = fields[7].Get<uint32>();
+            req = Collection::Normalise(req);
+
+            if (!req.Any())
+                continue;
+
+            for (uint8 i = 0; i < 5; ++i)
+            {
+                uint32 const spellId = fields[i].Get<uint32>();
+                if (!spellId)
+                    continue;
+
+                auto const it = collectables.find(spellId);
+                if (it == collectables.end())
+                    continue;
+
+                if (!it->second.requirement.Any())
+                    ++gated;
+
+                it->second.requirement = Collection::Stricter(it->second.requirement, req);
+            }
+        } while (result->NextRow());
+
+        LOG_INFO("module", "mod-collection: {} collectable spell(s) are gated on a skill or a level by their teaching item.", gated);
+        return gated;
     }
 
     uint32 LoadPool()
@@ -237,6 +295,18 @@ namespace
             if (!what || !Collection::MayTeach(what->lines, classMask, raceMask, cfg.Policy))
                 continue;
 
+            // The requirement the teaching item imposed. Without this a shared
+            // mount is usable the moment it arrives, riding skill or not,
+            // because the spell itself asks for nothing.
+            if (cfg.RespectRequirements && what->requirement.Any())
+            {
+                uint32 const rank = what->requirement.skillId
+                    ? player->GetSkillValue(uint16(what->requirement.skillId)) : 0;
+
+                if (!Collection::Meets(what->requirement, player->GetLevel(), rank))
+                    continue;
+            }
+
             // temporary: sends the client its learn packet, and _SaveSpells
             // skips it, so character_spell is never touched. SPEC_MASK_ALL is
             // what GetLearnSpellSpecMask would return anyway - it only narrows
@@ -265,6 +335,7 @@ public:
         if (reload)
         {
             BuildCollectables();
+            LoadRequirements();
             LoadPool();
         }
     }
@@ -272,6 +343,7 @@ public:
     void OnStartup() override
     {
         BuildCollectables();
+        LoadRequirements();
         LoadPool();
     }
 };
@@ -282,7 +354,8 @@ public:
     Collection_PlayerScript() : PlayerScript("Collection_PlayerScript",
         {
             PLAYERHOOK_ON_LOGIN,
-            PLAYERHOOK_ON_LEARN_SPELL
+            PLAYERHOOK_ON_LEARN_SPELL,
+            PLAYERHOOK_ON_LEVEL_CHANGED
         }) { }
 
     void OnPlayerLogin(Player* player) override
@@ -309,6 +382,22 @@ public:
                 "Your account's collection has added {} mount(s) and companion(s) to your spellbook.", taught);
     }
 
+    // A level is the other half of what the teaching items ask for, so a
+    // birthday can unlock something that is already in the pool.
+    void OnPlayerLevelChanged(Player* player, uint8 /*oldLevel*/) override
+    {
+        if (!cfg.Enable || !player)
+            return;
+
+        if (cfg.SkipBots && IsBot(player))
+            return;
+
+        if (uint32 const taught = Teach(player))
+            if (cfg.Announce)
+                ChatHandler(player->GetSession()).PSendSysMessage(
+                    "Your account's collection has added {} mount(s) and companion(s) you can now use.", taught);
+    }
+
     void OnPlayerLearnSpell(Player* player, uint32 spellId) override
     {
         // No re-entrancy guard is needed: addSpell does not fire this hook,
@@ -321,7 +410,13 @@ public:
             return;
 
         if (!Record(player->GetSession()->GetAccountId(), spellId, player->GetGUID().GetCounter()))
+        {
+            // Not a collectable, so it may well be a riding rank or a
+            // profession skill that has just unlocked something already in the
+            // pool. Cheap to re-check: the pool is small.
+            Teach(player);
             return;
+        }
 
         if (cfg.Announce)
             ChatHandler(player->GetSession()).PSendSysMessage(
