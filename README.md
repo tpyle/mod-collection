@@ -65,15 +65,25 @@ mounts to the races its DBC row names.
 
 ## Nothing is written to `character_spell`
 
-The pooled spells are taught with `Player::learnSpell(id, true)` - temporary.
-That still sends the client its learn packet, so the spellbook looks normal, but
-`_SaveSpells` skips temporary spells, so no row is written. Two consequences
-worth having:
+The pooled spells are added with `Player::addSpell(id, SPEC_MASK_ALL, true,
+true)` - temporary. That still sends the client its learn packet, so the
+spellbook looks normal, but `_SaveSpells` skips temporary spells, so no row is
+written. Two consequences worth having:
 
 * `account_collection` is the single record of what has been collected, rather
   than one record plus 1,200 copies spread over the characters.
 * Switching the module off gives every character back exactly the spellbook it
   owns, with nothing to clean up.
+
+`addSpell` and not `learnSpell`, and that is not a style choice. For a temporary
+learn from in world the two send the learn packet **twice**: `addSpell` has a
+branch of its own for temporary spells that calls `SendLearnPacket`, and then
+`learnSpell` calls `SendLearnPacket` again on success. The client reads the
+second packet as a second spell, so every shared mount and companion showed up
+in the spellbook twice. Calling `addSpell` directly sends exactly one. Nothing
+else in `learnSpell` is wanted here anyway - its rank-chain and
+requires-this-spell cascades mean nothing to a mount, and skipping it keeps this
+module out of its own `OnPlayerLearnSpell` hook without needing a guard.
 
 A character's own spells are harvested into the pool at login, which is what
 makes an existing realm's collections build up rather than starting empty -

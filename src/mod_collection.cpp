@@ -21,11 +21,21 @@
  * help, because it passes a spell the moment ANY row fits and the unrestricted
  * mounts row always fits. CollectionRules.h does it properly.
  *
- * Nothing is written to character_spell. The pooled spells are taught with
- * Player::learnSpell(id, true) - temporary - which sends the client its learn
- * packet but is skipped by _SaveSpells, so account_collection stays the single
- * record of what has been collected and switching the module off gives every
- * character back exactly the spellbook it owns.
+ * Nothing is written to character_spell. The pooled spells are added with
+ * Player::addSpell(id, SPEC_MASK_ALL, true, true) - temporary - which sends the
+ * client its learn packet but is skipped by _SaveSpells, so account_collection
+ * stays the single record of what has been collected and switching the module
+ * off gives every character back exactly the spellbook it owns.
+ *
+ * addSpell and not learnSpell, and that is not a style choice. For a temporary
+ * learn from in world the two send the learn packet twice over: addSpell has a
+ * branch of its own for temporary spells that calls SendLearnPacket, and then
+ * learnSpell calls SendLearnPacket again on success. The client takes the second
+ * packet as a second spell, so every shared mount and companion appeared in the
+ * spellbook twice. Calling addSpell directly sends exactly one packet. Nothing
+ * else in learnSpell is wanted here either: the rank-chain and
+ * requires-this-spell cascades at the end of it mean nothing to a mount, and
+ * skipping it also keeps this module out of its own OnPlayerLearnSpell hook.
  */
 
 #include "CollectionRules.h"
@@ -76,10 +86,6 @@ namespace
 
     // accountId -> the spells it has collected.
     std::unordered_map<uint32, std::unordered_set<uint32>> pool;
-
-    // Set while this module is doing the teaching, so the learn hook does not
-    // treat its own work as a fresh acquisition.
-    bool teaching = false;
 
     void LoadConfig()
     {
@@ -222,8 +228,6 @@ namespace
 
         uint32 taught = 0;
 
-        teaching = true;
-
         for (uint32 const spellId : it->second)
         {
             if (player->HasSpell(spellId))
@@ -234,12 +238,13 @@ namespace
                 continue;
 
             // temporary: sends the client its learn packet, and _SaveSpells
-            // skips it, so character_spell is never touched.
-            player->learnSpell(spellId, true);
+            // skips it, so character_spell is never touched. SPEC_MASK_ALL is
+            // what GetLearnSpellSpecMask would return anyway - it only narrows
+            // the mask for talent-based spells, and no mount or companion is
+            // one - and that helper is private to Player.
+            player->addSpell(spellId, SPEC_MASK_ALL, true, true);
             ++taught;
         }
-
-        teaching = false;
 
         return taught;
     }
@@ -306,7 +311,10 @@ public:
 
     void OnPlayerLearnSpell(Player* player, uint32 spellId) override
     {
-        if (!cfg.Enable || !player || teaching)
+        // No re-entrancy guard is needed: addSpell does not fire this hook,
+        // only learnSpell does, and Harvest skips temporary spells so what this
+        // module handed over is never collected back.
+        if (!cfg.Enable || !player)
             return;
 
         if (cfg.SkipBots && IsBot(player))
