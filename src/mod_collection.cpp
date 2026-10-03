@@ -222,7 +222,11 @@ namespace
 
     bool IsBot(Player const* player)
     {
-        return player && player->GetSession() && player->GetSession()->IsBot();
+        // IsHeadless, not the IsBot this used to call: upstream's headless
+        // session work renamed the idea and the predicate is the same one, a
+        // session with no socket behind it, which is exactly what
+        // mod-playerbots fabricates for its bots.
+        return player && player->GetSession() && player->GetSession()->IsHeadless();
     }
 
     Collectable const* Find(uint32 spellId)
