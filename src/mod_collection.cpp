@@ -178,9 +178,17 @@ namespace
 
             for (uint8 i = 0; i < 5; ++i)
             {
-                uint32 const spellId = fields[i].Get<uint32>();
-                if (!spellId)
+                // Signed, and read signed on purpose: item_template.spellid_N
+                // is a plain int and 70 of the rows this query matches hold
+                // -1 rather than 0 for "no spell". Reading those as uint32
+                // makes the database layer log "Incorrect value '-1' for type
+                // 'j'" once per field, which came to 99 lines of noise at every
+                // startup once the core began validating the width.
+                int32 const stored = fields[i].Get<int32>();
+                if (stored <= 0)
                     continue;
+
+                uint32 const spellId = uint32(stored);
 
                 auto const it = collectables.find(spellId);
                 if (it == collectables.end())
